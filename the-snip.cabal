@@ -83,11 +83,9 @@ library
   build-depends:
       attoparsec
     , base >=4.11 && <10
-    , bytestring
     , path
     , path-io
     , rio >=0.1.12.0
-    , text
     , unix
   default-language: Haskell2010
 
@@ -146,12 +144,10 @@ executable snip
   build-depends:
       attoparsec
     , base >=4.11 && <10
-    , bytestring
     , optparse-simple
     , path
     , path-io
     , rio >=0.1.12.0
-    , text
     , the-snip
     , unix
   default-language: Haskell2010
@@ -213,12 +209,10 @@ test-suite the-snip-test
   build-depends:
       attoparsec
     , base >=4.11 && <10
-    , bytestring
     , hspec
     , path
     , path-io
     , rio >=0.1.12.0
-    , text
     , the-snip
     , unix
   default-language: Haskell2010
