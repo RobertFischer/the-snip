@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           the-snip
-version:        0.0.0.1
+version:        0.1.0.0
 synopsis:       Command line tool for extracting demarcated snippets from text files.
 description:    Please see the README on Github at <https://github.com/robertfischer/the-snip#readme>
 category:       Tool
