@@ -10,7 +10,7 @@ Snippet 1!
 
   Snippet 2 with leading space
 
-  More leading spaces down here.
+    More leading spaces down here.
 
 # @snip>>>
 

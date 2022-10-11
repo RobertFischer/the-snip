@@ -29,7 +29,7 @@ optionsParser = Options
     pathParser :: Parser FilePath
     pathParser = strArgument 
       ( metavar "PATH" 
-      <> help "Path to process snippets"
+      <> help "Path to input files and directories. May be specified multiple times."
       )
     trimParser = switch
       ( short 't'
