@@ -3,14 +3,12 @@ module Main (main) where
 
 import Import
 import Run
-import RIO.Process
 import Options.Applicative.Simple
 import qualified Paths_the_snip
 import RIO.Set qualified as S
 import System.Posix.Files (getFileStatus, isDirectory, isRegularFile)
 import Path.Posix
 import Path.IO
-import RIO.Text qualified as T
 
 description :: String
 description = 
@@ -26,6 +24,7 @@ optionsParser = Options
   <*> optional baseDirParser
   <*> optional outputDirParser
   <*> trimParser
+  <*> verboseParser
   where
     pathParser :: Parser FilePath
     pathParser = strArgument 
@@ -36,6 +35,11 @@ optionsParser = Options
       ( short 't'
       <> long "trim"
       <> help "Trim common whitespace"
+      )
+    verboseParser = switch
+      ( short 'v'
+      <> long "verbose"
+      <> help "Be verbose in logging"
       )
     recursiveParser = switch
       ( short 'r'
@@ -65,10 +69,12 @@ main = do
     optionsParser
     empty
   baseDir <- optToAbsDir optsBaseDir
-  app <- App optsTrim baseDir
-    <$> mkFiles baseDir optsRecursive optsPaths
-    <*> optToAbsDir optsOutputDir
-  runRIO app run
+  logOpts <- logOptionsHandle stderr optsVerbose
+  withLogFunc logOpts $ \logFunc -> do
+    app <- App logFunc optsTrim baseDir
+      <$> mkFiles baseDir optsRecursive optsPaths
+      <*> optToAbsDir optsOutputDir
+    runRIO app run
 
 optToAbsDir :: Maybe (SomeBase Dir) -> IO (Path Abs Dir)
 optToAbsDir = \case

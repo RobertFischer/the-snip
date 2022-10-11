@@ -7,9 +7,9 @@ import Data.Attoparsec.Text as Parser
 import RIO.Text qualified as T
 import RIO.List qualified as L
 
-data LeadingWS = NoLeadingWS | LeadingSpaces Word | LeadingTabs Word
+data LeadingWS = NoLeadingWS | LeadingSpaces Word | LeadingTabs Word deriving (Show)
 
-data ParsedLine = StartMarkerLine (Maybe (Path Rel File)) | EndMarkerLine (Maybe (Path Rel File)) | ContentLine (LeadingWS,Text)
+data ParsedLine = EmptyLine | StartMarkerLine (Maybe (Path Rel File)) | EndMarkerLine (Maybe (Path Rel File)) | ContentLine (LeadingWS,Text) deriving (Show)
 
 mkContentLine :: Text -> ParsedLine
 mkContentLine content = ContentLine $ case T.uncons content of
@@ -19,40 +19,52 @@ mkContentLine content = ContentLine $ case T.uncons content of
     (LeadingTabs (fromIntegral $ T.length tabs), T.copy rest)
   Just (' ', _) -> 
     let (spaces,rest) = T.span (' ' ==) content in
-    (LeadingTabs (fromIntegral $ T.length spaces), T.copy rest)
+    (LeadingSpaces (fromIntegral $ T.length spaces), T.copy rest)
   Just _ -> 
     (NoLeadingWS, content)
 
-parseLine :: Text -> ParsedLine
-parseLine content = fromMaybe 
-  (mkContentLine content) 
-  (maybeResult . (`parse` content) $ parseEndMarker <|> parseStartMarker)
+parseLine :: Text -> RIO App ParsedLine
+parseLine content = 
+    case result of 
+      Left err -> do
+        logInfo . display . T.pack $
+          "Defaulting back to content line: " <> err
+        return $ mkContentLine content
+      Right val -> do
+        logInfo . display . T.pack $
+          "Parsed non-content line: " <> show val
+        return val
+  where
+    result = (`parseOnly` content) $ 
+      parseEmptyLine <|> parseEndMarker <|> parseStartMarker
 
 snipStartT :: Text
-snipStartT = "@snip>>>"
+snipStartT = "<<<@snip"
+
+parseEmptyLine :: Parser ParsedLine
+parseEmptyLine =
+  skipSpace >> endOfInput >> return EmptyLine
 
 parseStartMarker :: Parser ParsedLine
-parseStartMarker = StartMarkerLine <$>
-    (parseStartMarkerBeginning >> parseLabel <|> return Nothing)
+parseStartMarker = 
+    parseStartMarkerBeginning >> 
+      (StartMarkerLine <$> (parseLabel <|> return Nothing))
   where
-    parseStartMarkerBeginning = do
-      case T.uncons snipStartT of
-        Just (c,_) -> skipWhile (c /=)
-        _ -> return ()
-      asciiCI snipStartT <|> (Parser.take 1 >> parseStartMarkerBeginning)
+    parseStartMarkerBeginning = 
+      string snipStartT <|>
+        (Parser.take 1 >> parseStartMarkerBeginning)
 
 snipEndT :: Text
-snipEndT = "<<<@snip"
+snipEndT = "@snip>>>"
 
 parseEndMarker :: Parser ParsedLine
-parseEndMarker = EndMarkerLine <$>
-    (parseEndMarkerBeginning >> parseLabel <|> return Nothing)
+parseEndMarker = 
+    parseEndMarkerBeginning >>
+      (EndMarkerLine <$> (parseLabel <|> return Nothing))
   where
-    parseEndMarkerBeginning = do
-      case T.uncons snipEndT of
-        Just (c,_) -> skipWhile (c /=)
-        _ -> return ()
-      asciiCI snipEndT <|> (Parser.take 1 >> parseEndMarkerBeginning)
+    parseEndMarkerBeginning = 
+      string snipEndT <|>
+        (Parser.take 1 >> parseEndMarkerBeginning)
 
 parseLabel :: Parser (Maybe (Path Rel File))
 parseLabel = do
@@ -69,21 +81,26 @@ runFile relFile = ask >>= \App{appBaseDir,appOutputDir} -> do
     let inFile = appBaseDir </> relFile
     let outDirBase = appOutputDir </> relFile
     outDir <- addExtension ".snips" outDirBase >>= addExtension ".d" >>= fileToDir
+    logInfo . display . T.pack $ 
+      "Processing file " <> show inFile <> " into dir " <> show outDir
     processFile inFile outDir
   where
     fileToDir = parseAbsDir . toFilePath
 
 processFile :: Path Abs File -> Path Abs Dir -> RIO App ()
 processFile inFile outDir = do
-  ensureDir outDir
   fileLines <- liftIO $ T.lines <$> readFileUtf8 (toFilePath inFile)
-  fileContents <- pooledMapConcurrently (return . parseLine) fileLines
+  fileContents <- pooledMapConcurrently parseLine fileLines
   fileEx <- (".snip" <>) <$> fileExtension inFile
+  logInfo . display . T.pack $ 
+    "File contents for " <> show inFile <> ": " <> show fileContents
   processContents fileEx outDir 0 fileContents
 
 processContents :: String -> Path Abs Dir -> Word -> [ParsedLine] -> RIO App ()
 processContents _ _ _ [] = return ()
 processContents fileExt outDir startCount (StartMarkerLine mayLbl:rest) = do
+    logInfo . display . T.pack $
+      "Saw the start of snippet for " <> show outDir <> ": " <> lbl
     outFile <- (outDir </>) <$> parseRelFile (lbl <> fileExt)
     concurrently_
       (processSnip outFile lbl rest)
@@ -93,13 +110,23 @@ processContents fileExt outDir startCount (StartMarkerLine mayLbl:rest) = do
 processContents fileExt outDir startCount (_:rest) = processContents fileExt outDir startCount rest
 
 processSnip :: Path Abs File -> String -> [ParsedLine] -> RIO App ()
-processSnip _ _ [] = return ()
+processSnip outFile _ [] =
+  logInfo . display . T.pack $
+    "No contents for snippet for " <> show outFile
+processSnip outFile lbl (EmptyLine:remainingLines) =
+  processSnip outFile lbl remainingLines
 processSnip outFile lbl remainingLines = do
-  contentT <- T.unlines <$> extractSnipContent lbl remainingLines
+  contentT <- T.dropWhile ('\n' ==) . T.dropWhileEnd ('\n' ==) . T.unlines <$> extractSnipContent lbl remainingLines
+  ensureDir $ parent outFile
+  logInfo . display . T.pack $
+    "Snippet for " <> show outFile <> ": " <> T.unpack contentT
   writeFileUtf8 (toFilePath outFile) contentT
 
 extractSnipContent :: String -> [ParsedLine] -> RIO App [Text]
 extractSnipContent _ [] = return []
+extractSnipContent _ [EmptyLine] = return []
+extractSnipContent lbl (EmptyLine:rest) = 
+  ("" :) <$> extractSnipContent lbl rest
 extractSnipContent _ (EndMarkerLine Nothing:_) = return []
 extractSnipContent lbl (EndMarkerLine (Just endLbl):rest)
   | lbl == toFilePath endLbl = return []
@@ -129,24 +156,28 @@ extractSnipContent lbl parsedLines@(ContentLine _:_) = do
       foldr 
         (\item memo ->
           case (item,memo) of
-            (NoLeadingWS, _) -> Just NoLeadingWS
+            ((NoLeadingWS,content), _) -> 
+              if T.null content then
+                memo
+              else 
+                Just NoLeadingWS
             (_, Just NoLeadingWS) -> Just NoLeadingWS
-            (lead, Nothing) -> Just lead
-            (LeadingTabs lineCnt, Just (LeadingTabs comCnt)) ->
+            ((lead,_), Nothing) -> Just lead
+            ((LeadingTabs lineCnt,_), Just (LeadingTabs comCnt)) ->
               Just (LeadingTabs $ min lineCnt comCnt)
-            (LeadingSpaces lineCnt, Just (LeadingSpaces comCnt)) ->
+            ((LeadingSpaces lineCnt,_), Just (LeadingSpaces comCnt)) ->
               Just (LeadingSpaces $ min lineCnt comCnt)
-            (LeadingTabs _, Just (LeadingSpaces _)) ->
+            ((LeadingTabs _,_), Just (LeadingSpaces _)) ->
               Just NoLeadingWS
-            (LeadingSpaces _, Just (LeadingTabs _)) ->
+            ((LeadingSpaces _,_), Just (LeadingTabs _)) ->
               Just NoLeadingWS
         )
         Nothing
-        (fst <$> contentSpecs)
+        contentSpecs
     contentSpecs = catMaybes $ mayContent <$> contentParsedLines
     (contentParsedLines, rest) = L.span isContentLine parsedLines
     mayContent = \case
+        EmptyLine -> Just (NoLeadingWS, "")
         ContentLine spec -> Just spec
         _ -> Nothing
     isContentLine = isJust . mayContent
-
