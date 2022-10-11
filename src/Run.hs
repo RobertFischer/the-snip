@@ -27,7 +27,7 @@ parseLine :: Text -> RIO App ParsedLine
 parseLine content = 
     case result of 
       Left err -> do
-        logInfo . display . T.pack $
+        logDebug . display . T.pack $
           "Defaulting back to content line: " <> err
         return $ mkContentLine content
       Right val -> do
@@ -92,14 +92,14 @@ processFile inFile outDir = do
   fileLines <- liftIO $ T.lines <$> readFileUtf8 (toFilePath inFile)
   fileContents <- pooledMapConcurrently parseLine fileLines
   fileEx <- (".snip" <>) <$> fileExtension inFile
-  logInfo . display . T.pack $ 
+  logDebug . display . T.pack $ 
     "File contents for " <> show inFile <> ": " <> show fileContents
   processContents fileEx outDir 0 fileContents
 
 processContents :: String -> Path Abs Dir -> Word -> [ParsedLine] -> RIO App ()
 processContents _ _ _ [] = return ()
 processContents fileExt outDir startCount (StartMarkerLine mayLbl:rest) = do
-    logInfo . display . T.pack $
+    logDebug . display . T.pack $
       "Saw the start of snippet for " <> show outDir <> ": " <> lbl
     outFile <- (outDir </>) <$> parseRelFile (lbl <> fileExt)
     concurrently_
@@ -111,7 +111,7 @@ processContents fileExt outDir startCount (_:rest) = processContents fileExt out
 
 processSnip :: Path Abs File -> String -> [ParsedLine] -> RIO App ()
 processSnip outFile _ [] =
-  logInfo . display . T.pack $
+  logWarn . display . T.pack $
     "No contents for snippet for " <> show outFile
 processSnip outFile lbl (EmptyLine:remainingLines) =
   processSnip outFile lbl remainingLines
