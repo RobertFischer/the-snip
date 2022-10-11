@@ -23,10 +23,8 @@ dependencies:
   - base >= 4.11 && < 10
   - rio >= 0.1.12.0
   - attoparsec
-  - bytestring
   - path
   - path-io
-  - text
   - unix
 
 ghc-options:
